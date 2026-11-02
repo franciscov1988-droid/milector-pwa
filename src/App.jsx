@@ -83,9 +83,14 @@ export default function App() {
     }, 4000)
   }
 
-  async function connectDrive() {
+  // Siempre abre el modal del Client ID (prellenado), para poder corregirlo.
+  function connectDrive() {
     setMenu(false)
-    if (!D.getClientId()) { setClientModal(true); return }
+    setClientIdInput(D.getClientId())
+    setClientModal(true)
+  }
+
+  async function doConnect() {
     setBusy(true); setStatus('Conectando con Drive…')
     try {
       const r = await DBK.connectAndSync((fase, i, t) => setStatus(`${fase} ${i}/${t}…`))
@@ -119,7 +124,7 @@ export default function App() {
   }
   function saveClientId() {
     D.setClientId(clientId); setClientModal(false)
-    if (D.getClientId()) connectDrive()
+    if (clientId.trim()) doConnect()
   }
 
   async function doInstall() {
