@@ -17,9 +17,7 @@ const FONTS = {
   mono: '"SFMono-Regular", Consolas, "Liberation Mono", monospace'
 }
 
-export default function Reader({
-  buffer, book, onSaveProgress, onAddBookmark, onRemoveBookmark, onBack
-}) {
+export default function Reader({ buffer, book, onSaveProgress, onAddBookmark, onRemoveBookmark, onBack }) {
   const bookId = book.id
   const progress = book.progress
   const bookmarks = book.bookmarks || []
@@ -62,11 +60,8 @@ export default function Reader({
       const total = loc.start.displayed?.total || 1
       const progressInChapter = total > 1 ? (page - 1) / (total - 1) : 0
       let percent
-      if (b.locations && b.locations.length && b.locations.length()) {
-        percent = (b.locations.percentageFromCfi(loc.start.cfi) || 0) * 100
-      } else {
-        percent = ((chapterIndex + progressInChapter) / spineLen.current) * 100
-      }
+      if (b.locations && b.locations.length && b.locations.length()) percent = (b.locations.percentageFromCfi(loc.start.cfi) || 0) * 100
+      else percent = ((chapterIndex + progressInChapter) / spineLen.current) * 100
       const p = { chapterIndex, progressInChapter, percent, page, total }
       lastPos.current = p; setPos(p); scheduleSave(p)
     })
@@ -81,21 +76,14 @@ export default function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buffer])
 
-  useEffect(() => {
-    saveSettings(settings)
-    if (rendRef.current) applySettings(rendRef.current, settings)
-  }, [settings])
-
+  useEffect(() => { saveSettings(settings); if (rendRef.current) applySettings(rendRef.current, settings) }, [settings])
   useEffect(() => {
     const onResize = () => { try { rendRef.current?.resize() } catch {} }
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
-
   useEffect(() => {
-    async function lock() {
-      try { if ('wakeLock' in navigator) wakeLock.current = await navigator.wakeLock.request('screen') } catch {}
-    }
+    async function lock() { try { if ('wakeLock' in navigator) wakeLock.current = await navigator.wakeLock.request('screen') } catch {} }
     lock()
     const onVis = () => { if (document.visibilityState === 'hidden') flushSave(); else lock() }
     const onUnload = () => flushSave()
@@ -107,7 +95,6 @@ export default function Reader({
       try { wakeLock.current?.release() } catch {}
     }
   }, [])
-
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'ArrowRight' || e.key === 'PageDown') rendRef.current?.next()
@@ -117,18 +104,12 @@ export default function Reader({
     return () => window.removeEventListener('keyup', onKey)
   }, [])
 
-  function scheduleSave(p) {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => flushSave(p), 700)
-  }
+  function scheduleSave(p) { if (saveTimer.current) clearTimeout(saveTimer.current); saveTimer.current = setTimeout(() => flushSave(p), 700) }
   function flushSave(p) {
     const cur = p || lastPos.current
     if (!cur) return
-    onSaveProgress(bookId, {
-      chapterIndex: cur.chapterIndex, progressInChapter: cur.progressInChapter, percent: cur.percent
-    })
+    onSaveProgress(bookId, { chapterIndex: cur.chapterIndex, progressInChapter: cur.progressInChapter, percent: cur.percent })
   }
-
   function addBookmark() {
     const cur = lastPos.current || pos
     onAddBookmark(bookId, {
@@ -147,7 +128,6 @@ export default function Reader({
         <button className="icon" onClick={() => setPanel('bookmarks')} title="Marcadores">≡</button>
         <button className="icon" onClick={() => setPanel('settings')} title="Ajustes">Aa</button>
       </div>
-
       <div className="viewer" style={{ padding: `0 ${settings.margin}px`, background: PAGE_BG[settings.theme] }}>
         <div ref={viewerRef} style={{ height: '100%' }} />
         {!ready && (
@@ -158,20 +138,15 @@ export default function Reader({
         <div className="nav left" onClick={() => rendRef.current?.prev()}><span>‹</span></div>
         <div className="nav right" onClick={() => rendRef.current?.next()}><span>›</span></div>
       </div>
-
       <div className="rfoot">
         <span>{Math.round(pos.percent)}%</span>
         <input type="range" min="0" max="100" value={Math.round(pos.percent)}
           onChange={(e) => seekPercent(rendRef.current, bookRef.current, Number(e.target.value))} />
         <span>{pos.total > 1 ? `${pos.total - pos.page} pág. rest.` : ''}</span>
       </div>
-
       {panel && <div className="overlay" onClick={() => setPanel(null)} />}
       {panel === 'settings' && <SettingsPanel settings={settings} setSettings={setSettings} onClose={() => setPanel(null)} />}
-      {panel === 'bookmarks' && (
-        <BookmarksPanel bookmarks={bookmarks} onGo={goToBookmark}
-          onRemove={(id) => onRemoveBookmark(bookId, id)} onClose={() => setPanel(null)} />
-      )}
+      {panel === 'bookmarks' && <BookmarksPanel bookmarks={bookmarks} onGo={goToBookmark} onRemove={(id) => onRemoveBookmark(bookId, id)} onClose={() => setPanel(null)} />}
     </div>
   )
 }
@@ -196,9 +171,7 @@ async function restore(rendition, book, prog) {
       const total = rendition.currentLocation()?.start?.displayed?.total || 1
       const target = Math.round(frac * (total - 1)) + 1
       let guard = 0
-      while ((rendition.currentLocation()?.start?.displayed?.page || 1) < target && guard < total + 3) {
-        await rendition.next(); guard++
-      }
+      while ((rendition.currentLocation()?.start?.displayed?.page || 1) < target && guard < total + 3) { await rendition.next(); guard++ }
     }
   } catch { try { await rendition.display() } catch {} }
 }
@@ -229,11 +202,7 @@ function Row({ label, items, val, on }) {
   return (
     <div className="row">
       <label>{label}</label>
-      <div className="chips">
-        {items.map(([v, l]) => (
-          <button key={v} className={`chip ${val === v ? 'active' : ''}`} onClick={() => on(v)}>{l}</button>
-        ))}
-      </div>
+      <div className="chips">{items.map(([v, l]) => <button key={v} className={`chip ${val === v ? 'active' : ''}`} onClick={() => on(v)}>{l}</button>)}</div>
     </div>
   )
 }

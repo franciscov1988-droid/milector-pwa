@@ -24,7 +24,6 @@ function getDB() {
   return dbPromise
 }
 
-// Ejecuta una operación en un store y resuelve con el resultado del request.
 async function run(store, mode, fn) {
   const d = await getDB()
   return new Promise((resolve, reject) => {
@@ -38,7 +37,6 @@ async function run(store, mode, fn) {
   })
 }
 
-// ---- Libros (metadatos) ----
 export async function getAllBooks() { return (await run('books', 'readonly', (s) => s.getAll())) || [] }
 export async function getBook(id) { return run('books', 'readonly', (s) => s.get(id)) }
 export async function putBook(book) { return run('books', 'readwrite', (s) => s.put(book)) }
@@ -47,16 +45,11 @@ export async function deleteBookAll(id) {
   await run('epub', 'readwrite', (s) => s.delete(id))
   await run('cover', 'readwrite', (s) => s.delete(id))
 }
-
-// ---- Archivo EPUB ----
 export async function getEpub(id) { return run('epub', 'readonly', (s) => s.get(id)) }
 export async function putEpub(id, arrayBuffer) { return run('epub', 'readwrite', (s) => s.put(arrayBuffer, id)) }
-
-// ---- Portada ----
 export async function getCover(id) { return run('cover', 'readonly', (s) => s.get(id)) }
 export async function putCover(id, blob) { return run('cover', 'readwrite', (s) => s.put(blob, id)) }
 
-// SHA-1 del archivo (id estable; evita duplicados y empata con la app Android)
 export async function sha1Hex(arrayBuffer) {
   const hash = await crypto.subtle.digest('SHA-1', arrayBuffer)
   return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('')

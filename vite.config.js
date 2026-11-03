@@ -14,9 +14,8 @@ export default defineConfig({
       manifest: {
         name: 'Mi Lector',
         short_name: 'Mi Lector',
-        description: 'Lector de EPUB offline, instalable, con respaldo en JSON.',
+        description: 'Lector de EPUB offline, instalable, con sincronización en Google Drive.',
         lang: 'es',
-        dir: 'ltr',
         theme_color: '#4F46E5',
         background_color: '#f6f5f3',
         display: 'standalone',
@@ -30,7 +29,6 @@ export default defineConfig({
         ]
       },
       workbox: {
-        // Cachea el app shell para que funcione sin conexión.
         globPatterns: ['**/*.{js,css,html,png,svg,woff2}'],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         navigateFallback: 'index.html'

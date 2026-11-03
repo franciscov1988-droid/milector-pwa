@@ -19,11 +19,9 @@
   </defs>
   <rect width="512" height="512" fill="url(#bg)"/>
   <ellipse cx="256" cy="292" rx="200" ry="150" fill="url(#glow)"/>
-  <!-- páginas -->
   <path d="M256 186 L128 220 Q118 222 118 234 L118 328 Q118 340 128 338 L256 356 Z" fill="url(#pageL)"/>
   <path d="M256 186 L384 220 Q394 222 394 234 L394 328 Q394 340 384 338 L256 356 Z" fill="url(#pageR)"/>
   <path d="M256 186 L256 356" stroke="#C9B98E" stroke-width="7" opacity="0.7" stroke-linecap="round"/>
-  <!-- renglones -->
   <g stroke="#B7A98A" stroke-width="7" stroke-linecap="round" opacity="0.85">
     <line x1="152" y1="244" x2="232" y2="236"/><line x1="152" y1="268" x2="232" y2="260"/>
     <line x1="152" y1="292" x2="232" y2="284"/><line x1="152" y1="316" x2="214" y2="310"/>
@@ -32,7 +30,6 @@
     <line x1="280" y1="236" x2="360" y2="244"/><line x1="280" y1="260" x2="360" y2="268"/>
     <line x1="280" y1="284" x2="360" y2="292"/><line x1="280" y1="310" x2="342" y2="316"/>
   </g>
-  <!-- marcador -->
   <path d="M304 162 L304 262 L325 240 L346 262 L346 162 Z" fill="#F43F5E"/>
   <path d="M304 162 L346 162 L346 176 L304 176 Z" fill="#E11D48"/>
 </svg>
