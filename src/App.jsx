@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as DB from './lib/db.js'
-import * as D from './lib/drive.js'
-import * as DBK from './lib/driveBackup.js'
+import * as FB from './lib/firebase.js'
+import * as CLOUD from './lib/cloud.js'
 import { importEpubFile } from './lib/epubImport.js'
 import { downloadBackup, importBackupFile } from './lib/backup.js'
 import Library from './components/Library.jsx'
@@ -9,52 +9,87 @@ import Reader from './components/Reader.jsx'
 
 const hiddenInput = { position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0 0 0 0)', border: 0, opacity: 0 }
 
-function orderBooks(list) {
-  return [...list].sort((a, b) => {
-    const ta = Math.max(a.lastOpenedAt || 0, a.progress?.updatedAt || 0)
-    const tb = Math.max(b.lastOpenedAt || 0, b.progress?.updatedAt || 0)
-    if (tb !== ta) return tb - ta
-    return (a.title || '').localeCompare(b.title || '')
-  })
-}
+function activity(b) { return Math.max(b.lastOpenedAt || 0, b.progress?.updatedAt || 0) }
 
 export default function App() {
-  const [books, setBooks] = useState([])
+  const [localBooks, setLocalBooks] = useState([])
+  const [cloudMeta, setCloudMeta] = useState({})   // id -> remote
   const [current, setCurrent] = useState(null)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
   const [toast, setToast] = useState('')
   const [menu, setMenu] = useState(false)
   const [backupModal, setBackupModal] = useState(false)
-  const [driveOn, setDriveOn] = useState(D.isEnabled())
-  const [clientModal, setClientModal] = useState(false)
-  const [clientId, setClientIdInput] = useState(D.getClientId())
+
+  // Firebase / sesión
+  const [user, setUser] = useState(null)
+  const [configModal, setConfigModal] = useState(false)
+  const [authModal, setAuthModal] = useState(false)
+  const [cfgText, setCfgText] = useState('')
+  const [email, setEmail] = useState('')
+  const [pass, setPass] = useState('')
 
   const fileInput = useRef(null)
   const importInput = useRef(null)
   const installEvt = useRef(null)
-  const driveFolder = useRef(null)
-  const drivePushTimer = useRef(null)
+  const unsubLib = useRef(null)
+  const firstSnap = useRef(true)
   const [canInstall, setCanInstall] = useState(false)
 
-  async function reload() { setBooks(orderBooks(await DB.getAllBooks())) }
+  async function reload() { setLocalBooks(await DB.getAllBooks()) }
   useEffect(() => { reload() }, [])
 
-  // Arranque: retoma la sesión de Drive en silencio y trae las posiciones recientes.
+  // Lista mostrada: une libros locales + los que solo están en la nube.
+  const books = useMemo(() => {
+    const byId = new Map()
+    for (const b of localBooks) byId.set(b.id, { ...b, cloudOnly: false })
+    for (const id of Object.keys(cloudMeta)) {
+      if (!byId.has(id)) {
+        const r = cloudMeta[id]
+        byId.set(id, { id, title: r.title || 'Libro', author: r.author || '', progress: r.progress || null, bookmarks: r.bookmarks || [], lastOpenedAt: 0, cloudOnly: true })
+      }
+    }
+    return [...byId.values()].sort((a, b) => {
+      const d = activity(b) - activity(a)
+      return d !== 0 ? d : (a.title || '').localeCompare(b.title || '')
+    })
+  }, [localBooks, cloudMeta])
+
+  // --- Firebase: observar sesión ---
   useEffect(() => {
-    if (!D.isEnabled()) return
-    let alive = true
-    ;(async () => {
-      try {
-        await D.signIn(false) // silencioso: si no hay sesión, falla sin molestar
-        const folderId = await getFolder()
-        await DBK.pullState(folderId)
-        if (alive) await reload()
-      } catch { /* sin conexión o sin sesión: seguimos offline */ }
-    })()
-    return () => { alive = false }
+    if (!FB.hasConfig()) return
+    FB.initFirebase()
+    const unsub = FB.watchAuth((u) => {
+      setUser(u || null)
+      if (u && FB.isCloudOn()) startLibraryListener(u.uid)
+      else stopLibraryListener()
+    })
+    return () => { unsub && unsub(); stopLibraryListener() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  function stopLibraryListener() {
+    if (unsubLib.current) { unsubLib.current(); unsubLib.current = null }
+    firstSnap.current = true
+  }
+  function startLibraryListener(uid) {
+    stopLibraryListener()
+    unsubLib.current = FB.watchLibrary(uid, async (items) => {
+      // Aplica progreso remoto al local y refresca
+      for (const r of items) { try { await CLOUD.applyRemoteBook(r) } catch {} }
+      const map = {}
+      for (const r of items) map[r.id] = r
+      setCloudMeta(map)
+      await reload()
+      // Primera vez: sube los libros locales que falten en la nube
+      if (firstSnap.current) {
+        firstSnap.current = false
+        const ids = new Set(items.map((x) => x.id))
+        try { await CLOUD.uploadMissing(uid, ids, (i, t, n) => setStatus(`Respaldando ${i}/${t}…`)) } catch {}
+        setStatus('')
+      }
+    })
+  }
 
   useEffect(() => {
     const onBip = (e) => { e.preventDefault(); installEvt.current = e; setCanInstall(true) }
@@ -64,57 +99,44 @@ export default function App() {
 
   function showToast(msg) { setToast(msg); setTimeout(() => setToast(''), 2800) }
 
-  // ---- Drive ----
-  async function getFolder() {
-    if (!driveFolder.current) driveFolder.current = await D.ensureFolder()
-    return driveFolder.current
+  // --- Activar sincronización ---
+  function enableSync() {
+    setMenu(false)
+    if (!FB.hasConfig()) { setCfgText(''); setConfigModal(true); return }
+    setAuthModal(true)
   }
-  function scheduleDrivePush() {
-    if (!D.isEnabled()) return
-    if (drivePushTimer.current) clearTimeout(drivePushTimer.current)
-    drivePushTimer.current = setTimeout(() => flushDrivePush(), 3500)
+  function saveConfig() {
+    try {
+      const cfg = FB.parseConfig(cfgText)
+      FB.saveConfig(cfg)
+      FB.initFirebase()
+      setConfigModal(false)
+      setAuthModal(true)
+    } catch (e) { showToast(e.message) }
   }
-  async function flushDrivePush() {
-    if (!D.isEnabled()) return
-    if (drivePushTimer.current) { clearTimeout(drivePushTimer.current); drivePushTimer.current = null }
-    try { await DBK.pushState(await getFolder()) } catch { /* reintenta luego */ }
+  async function doAuth(create) {
+    if (!email.trim() || !pass) { showToast('Escribe tu correo y contraseña'); return }
+    setBusy(true); setStatus(create ? 'Creando cuenta…' : 'Entrando…')
+    try {
+      const u = create ? await FB.signUp(email.trim(), pass) : await FB.signInEmail(email.trim(), pass)
+      FB.setCloudOn(true)
+      setUser(u); setAuthModal(false); setPass('')
+      startLibraryListener(u.uid)
+      showToast('Sincronización activada')
+    } catch (e) {
+      showToast(traducirError(e.message))
+    } finally { setBusy(false); setStatus('') }
+  }
+  async function disableSync() {
+    setMenu(false)
+    stopLibraryListener()
+    FB.setCloudOn(false)
+    await FB.logout()
+    setUser(null); setCloudMeta({})
+    showToast('Sincronización desactivada (la lectura sigue funcionando)')
   }
 
-  function connectDrive() { setMenu(false); setClientIdInput(D.getClientId()); setClientModal(true) }
-  async function doConnect() {
-    setBusy(true); setStatus('Conectando con Drive…')
-    try {
-      const r = await DBK.connectAndSync((fase, i, t) => setStatus(`${fase} ${i}/${t}…`))
-      D.setEnabled(true); setDriveOn(true)
-      await reload()
-      showToast(`Drive conectado · ${r.downloaded} bajados, ${r.uploaded} respaldados`)
-    } catch (e) { showToast('Error: ' + e.message) }
-    finally { setBusy(false); setStatus('') }
-  }
-  function saveClientId() { D.setClientId(clientId); setClientModal(false); if (clientId.trim()) doConnect() }
-
-  async function syncNow() {
-    setMenu(false); setBusy(true); setStatus('Sincronizando…')
-    try {
-      const r = await DBK.syncNow((fase, i, t) => setStatus(`${fase} ${i}/${t}…`))
-      await reload()
-      showToast(r.changed > 0 ? `Sincronizado · ${r.changed} libro(s) actualizado(s)` : 'Sincronizado · todo al día')
-    } catch (e) { showToast('Error: ' + e.message) }
-    finally { setBusy(false); setStatus('') }
-  }
-  async function downloadFromDrive() {
-    setMenu(false); setBusy(true); setStatus('Descargando de Drive…')
-    try {
-      const folderId = await getFolder()
-      const n = await DBK.restoreFromDrive(folderId, (i, t) => setStatus(`Descargando ${i}/${t}…`))
-      await reload()
-      showToast(`Descargados de Drive: ${n} libros`)
-    } catch (e) { showToast('Error: ' + e.message) }
-    finally { setBusy(false); setStatus('') }
-  }
-  function disconnectDrive() { setMenu(false); D.setEnabled(false); setDriveOn(false); driveFolder.current = null; showToast('Drive desconectado (la lectura sigue funcionando)') }
-
-  // ---- Importar ----
+  // --- Importar ---
   async function onPickEpubs(ev) {
     const files = [...(ev.target.files || [])]
     ev.target.value = ''
@@ -125,31 +147,33 @@ export default function App() {
       for (const f of files) { setStatus(`Importando ${++n}/${files.length}…`); added.push(await importEpubFile(f)) }
       await reload()
       showToast(files.length > 1 ? `${files.length} libros agregados` : 'Libro agregado')
-      if (D.isEnabled()) {
-        try {
-          const folderId = await getFolder()
-          for (const bk of added) if (bk) await DBK.uploadOneBook(folderId, bk)
-          scheduleDrivePush()
-        } catch { /* se reintenta al sincronizar */ }
+      if (user && FB.isCloudOn()) {
+        setStatus('Respaldando en la nube…')
+        for (const bk of added) if (bk) { try { await CLOUD.uploadBook(user.uid, bk) } catch {} }
       }
     } catch (e) { showToast('Error al importar: ' + e.message) }
     finally { setBusy(false); setStatus('') }
   }
 
-  // ---- Abrir libro (Whispersync: trae la última página de Drive) ----
+  // --- Abrir libro (trae la última página de la nube) ---
   async function openBook(book) {
     setBusy(true); setStatus('Abriendo…')
     try {
-      if (D.isEnabled()) {
+      // Si solo está en la nube, descargarlo primero
+      if (book.cloudOnly || !(await DB.getEpub(book.id))) {
+        if (user) { setStatus('Descargando libro…'); await CLOUD.downloadBook(user.uid, cloudMeta[book.id] || book) }
+      }
+      // Traer el progreso más reciente desde Firestore
+      if (user && FB.isCloudOn()) {
         try {
           setStatus('Buscando tu última página…')
-          await D.signIn(true)                 // asegura sesión (puede pedir confirmación una vez)
-          await DBK.pullState(await getFolder())
+          const remote = await FB.cloudGetBook(user.uid, book.id)
+          if (remote) await CLOUD.applyRemoteBook({ id: book.id, ...remote })
         } catch { /* sin conexión: usamos lo local */ }
       }
-      const fresh = (await DB.getBook(book.id)) || book
+      const fresh = await DB.getBook(book.id)
       const ab = await DB.getEpub(book.id)
-      if (!ab) { showToast('No se encontró el archivo del libro'); return }
+      if (!fresh || !ab) { showToast('No se pudo abrir el libro'); return }
       const updated = { ...fresh, lastOpenedAt: Date.now() }
       await DB.putBook(updated)
       setCurrent({ buffer: ab.slice(0), book: updated })
@@ -159,34 +183,35 @@ export default function App() {
   }
 
   async function deleteBook(book) {
-    if (!window.confirm(`¿Eliminar “${book.title}”? Se borra el libro y tu progreso en este dispositivo.`)) return
-    await DB.deleteBookAll(book.id); await reload(); showToast('Libro eliminado')
+    if (!window.confirm(`¿Eliminar “${book.title}” de este dispositivo? (No se borra de la nube.)`)) return
+    await DB.deleteBookAll(book.id); await reload(); showToast('Libro eliminado de este dispositivo')
   }
 
-  // ---- Progreso / marcadores ----
+  // --- Progreso / marcadores ---
   async function saveProgress(bookId, prog) {
     const b = await DB.getBook(bookId); if (!b) return
     b.progress = { ...prog, updatedAt: Date.now() }
     await DB.putBook(b)
-    setBooks((prev) => orderBooks(prev.map((x) => (x.id === bookId ? b : x))))
-    scheduleDrivePush()
+    setLocalBooks((prev) => prev.map((x) => (x.id === bookId ? b : x)))
+    if (user && FB.isCloudOn()) { try { await CLOUD.pushProgress(user.uid, b) } catch {} }
   }
   async function addBookmark(bookId, bm) {
     const b = await DB.getBook(bookId); if (!b) return
     b.bookmarks = [...(b.bookmarks || []).filter((x) => x.id !== bm.id), bm]
     await DB.putBook(b)
     if (current?.book.id === bookId) setCurrent((c) => ({ ...c, book: b }))
-    showToast('Marcador guardado'); scheduleDrivePush()
+    showToast('Marcador guardado')
+    if (user && FB.isCloudOn()) { try { await CLOUD.pushBookmarks(user.uid, b) } catch {} }
   }
   async function removeBookmark(bookId, id) {
     const b = await DB.getBook(bookId); if (!b) return
     b.bookmarks = (b.bookmarks || []).filter((x) => x.id !== id)
     await DB.putBook(b)
     if (current?.book.id === bookId) setCurrent((c) => ({ ...c, book: b }))
-    scheduleDrivePush()
+    if (user && FB.isCloudOn()) { try { await CLOUD.pushBookmarks(user.uid, b) } catch {} }
   }
 
-  // ---- Respaldo JSON ----
+  // --- Respaldo JSON ---
   async function exportAll(includeEpubs) {
     setBackupModal(false); setBusy(true)
     try {
@@ -216,7 +241,7 @@ export default function App() {
     e.prompt(); await e.userChoice; installEvt.current = null; setCanInstall(false)
   }
 
-  // ---- Lector ----
+  // --- Lector ---
   if (current) {
     return (
       <Reader
@@ -225,10 +250,12 @@ export default function App() {
         onSaveProgress={saveProgress}
         onAddBookmark={addBookmark}
         onRemoveBookmark={removeBookmark}
-        onBack={() => { setCurrent(null); reload(); flushDrivePush() }}
+        onBack={() => { setCurrent(null); reload() }}
       />
     )
   }
+
+  const synced = !!user && FB.isCloudOn()
 
   return (
     <div className="app" onClick={() => menu && setMenu(false)}>
@@ -236,19 +263,15 @@ export default function App() {
         <div className="brand"><div className="mark">📖</div><h1>Mi Lector</h1></div>
         <div className="spacer" />
         {busy && <span className="status"><span className="spinner" /> {status}</span>}
-        {!busy && driveOn && <span className="status" title="Sincronización con Drive activa">☁️</span>}
+        {!busy && synced && <span className="status" title={`Sincronizado · ${user.email}`}>☁️</span>}
         <div className="menuwrap" onClick={(e) => e.stopPropagation()}>
           <button className="icon" onClick={() => setMenu((m) => !m)} title="Menú" style={{ fontSize: 22 }}>⋯</button>
           {menu && (
             <div className="menu">
               {canInstall && <><button onClick={doInstall}>⬇️ Instalar app</button><div className="sep" /></>}
-              {!driveOn
-                ? <button onClick={connectDrive}>☁️ Conectar Google Drive</button>
-                : <>
-                    <button onClick={syncNow}>🔄 Sincronizar ahora</button>
-                    <button onClick={downloadFromDrive}>⬇️ Descargar libros de Drive</button>
-                    <button onClick={disconnectDrive}>🔌 Desconectar Drive</button>
-                  </>}
+              {!synced
+                ? <button onClick={enableSync}>☁️ Activar sincronización</button>
+                : <button onClick={disableSync}>🔌 Desactivar sincronización</button>}
               <div className="sep" />
               <button onClick={() => { setMenu(false); setBackupModal(true) }}>💾 Exportar respaldo (JSON)</button>
               <button onClick={() => { setMenu(false); importInput.current?.click() }}>📥 Restaurar respaldo (JSON)</button>
@@ -268,9 +291,9 @@ export default function App() {
         <div className="modal-bg" onClick={() => setBackupModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <h3>Exportar respaldo</h3>
-            <p>Guarda un archivo <b>.json</b> que puedes llevar a otro dispositivo y restaurar desde el menú. Elige qué incluir:</p>
+            <p>Guarda un archivo <b>.json</b> con tus libros, progreso y marcadores. Elige qué incluir:</p>
             <div className="opt">
-              <button onClick={() => exportAll(true)}>📚 Todo (libros + progreso + datos)</button>
+              <button onClick={() => exportAll(true)}>📚 Todo (libros + progreso)</button>
               <button className="ghost" onClick={() => exportAll(false)}>⚡ Solo datos (progreso y marcadores)</button>
             </div>
             <button className="ghost close btn-full" onClick={() => setBackupModal(false)}>Cancelar</button>
@@ -278,16 +301,34 @@ export default function App() {
         </div>
       )}
 
-      {clientModal && (
-        <div className="modal-bg" onClick={() => setClientModal(false)}>
+      {configModal && (
+        <div className="modal-bg" onClick={() => setConfigModal(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h3>Conectar Google Drive</h3>
-            <p>Pega tu <b>Client ID de OAuth (tipo Aplicación web)</b>. No uses el de Android.
-              Tus libros se sincronizarán con la carpeta “Mi Lector” de tu Drive.</p>
-            <input placeholder="xxxx.apps.googleusercontent.com" value={clientId} onChange={(e) => setClientIdInput(e.target.value)} />
+            <h3>Configurar Firebase</h3>
+            <p>Pega aquí el bloque <b>firebaseConfig</b> que te da Firebase (Configuración del
+              proyecto → Tus apps → SDK). Se guarda solo en este navegador.</p>
+            <textarea className="ta" placeholder={'const firebaseConfig = {\n  apiKey: "...",\n  projectId: "...",\n  appId: "..."\n};'}
+              value={cfgText} onChange={(e) => setCfgText(e.target.value)} />
             <div style={{ height: 12 }} />
-            <button className="btn-full" onClick={saveClientId} disabled={!clientId}>Guardar y conectar</button>
-            <button className="ghost close btn-full" onClick={() => setClientModal(false)}>Cancelar</button>
+            <button className="btn-full" onClick={saveConfig} disabled={!cfgText.trim()}>Guardar</button>
+            <button className="ghost close btn-full" onClick={() => setConfigModal(false)}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {authModal && (
+        <div className="modal-bg" onClick={() => setAuthModal(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Entrar a la sincronización</h3>
+            <p>Usa el mismo correo y contraseña en todos tus dispositivos para compartir tu
+              biblioteca y tu última página leída.</p>
+            <input type="email" placeholder="correo@ejemplo.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <div style={{ height: 10 }} />
+            <input type="password" placeholder="contraseña (mín. 6 caracteres)" value={pass} onChange={(e) => setPass(e.target.value)} />
+            <div style={{ height: 14 }} />
+            <button className="btn-full" onClick={() => doAuth(false)} disabled={busy}>Entrar</button>
+            <button className="ghost btn-full" onClick={() => doAuth(true)} disabled={busy} style={{ marginTop: 8 }}>Crear cuenta nueva</button>
+            <button className="ghost close btn-full" onClick={() => setAuthModal(false)}>Cancelar</button>
           </div>
         </div>
       )}
@@ -295,4 +336,16 @@ export default function App() {
       {toast && <div className="toast">{toast}</div>}
     </div>
   )
+}
+
+function traducirError(msg) {
+  const m = String(msg)
+  if (m.includes('auth/invalid-email')) return 'El correo no es válido'
+  if (m.includes('auth/invalid-credential') || m.includes('wrong-password') || m.includes('user-not-found')) return 'Correo o contraseña incorrectos'
+  if (m.includes('auth/email-already-in-use')) return 'Ese correo ya tiene cuenta; usa “Entrar”'
+  if (m.includes('auth/weak-password')) return 'La contraseña debe tener al menos 6 caracteres'
+  if (m.includes('auth/network-request-failed')) return 'Sin conexión a internet'
+  if (m.includes('auth/unauthorized-domain') || m.includes('unauthorized-domain')) return 'Agrega este dominio en Firebase → Authentication → Dominios autorizados'
+  if (m.includes('configuration-not-found') || m.includes('operation-not-allowed')) return 'Habilita Correo/contraseña en Firebase → Authentication'
+  return 'Error: ' + m
 }
