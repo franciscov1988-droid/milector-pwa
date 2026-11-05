@@ -157,13 +157,14 @@ export default function App() {
 
   // --- Abrir libro (trae la última página de la nube) ---
   async function openBook(book) {
+    // Libro que está en tu nube pero sin el archivo en este dispositivo
+    if (book.cloudOnly || !(await DB.getEpub(book.id))) {
+      showToast('Este libro está en tu nube. Agrégalo aquí con “＋ Agregar EPUB” (el mismo archivo); tu última página ya está guardada.')
+      return
+    }
     setBusy(true); setStatus('Abriendo…')
     try {
-      // Si solo está en la nube, descargarlo primero
-      if (book.cloudOnly || !(await DB.getEpub(book.id))) {
-        if (user) { setStatus('Descargando libro…'); await CLOUD.downloadBook(user.uid, cloudMeta[book.id] || book) }
-      }
-      // Traer el progreso más reciente desde Firestore
+      // Traer el progreso más reciente desde Firestore (la última página de otro equipo)
       if (user && FB.isCloudOn()) {
         try {
           setStatus('Buscando tu última página…')
@@ -211,6 +212,22 @@ export default function App() {
     if (user && FB.isCloudOn()) { try { await CLOUD.pushBookmarks(user.uid, b) } catch {} }
   }
 
+  // --- Subrayados y notas ---
+  async function saveHighlight(bookId, hl) {
+    const b = await DB.getBook(bookId); if (!b) return
+    b.highlights = [...(b.highlights || []).filter((x) => x.id !== hl.id), hl]
+    await DB.putBook(b)
+    if (current?.book.id === bookId) setCurrent((c) => ({ ...c, book: b }))
+    if (user && FB.isCloudOn()) { try { await CLOUD.pushHighlights(user.uid, b) } catch {} }
+  }
+  async function removeHighlight(bookId, id) {
+    const b = await DB.getBook(bookId); if (!b) return
+    b.highlights = (b.highlights || []).filter((x) => x.id !== id)
+    await DB.putBook(b)
+    if (current?.book.id === bookId) setCurrent((c) => ({ ...c, book: b }))
+    if (user && FB.isCloudOn()) { try { await CLOUD.pushHighlights(user.uid, b) } catch {} }
+  }
+
   // --- Respaldo JSON ---
   async function exportAll(includeEpubs) {
     setBackupModal(false); setBusy(true)
@@ -250,6 +267,8 @@ export default function App() {
         onSaveProgress={saveProgress}
         onAddBookmark={addBookmark}
         onRemoveBookmark={removeBookmark}
+        onSaveHighlight={saveHighlight}
+        onRemoveHighlight={removeHighlight}
         onBack={() => { setCurrent(null); reload() }}
       />
     )

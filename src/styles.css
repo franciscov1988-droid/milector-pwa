@@ -105,6 +105,36 @@ input[type=range] { width: 100%; accent-color: var(--primary); }
   border-radius: 11px; background: var(--surface); color: var(--fg); resize: vertical;
   font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12.5px; }
 .ta:focus { outline: 2px solid var(--primary); outline-offset: -1px; }
+.ta.note { font-family: inherit; font-size: 15px; }
+
+/* Barra de selección (subrayar / nota / compartir) */
+.selbar { position: absolute; left: 50%; transform: translateX(-50%); bottom: 64px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  padding: 8px 10px; box-shadow: var(--shadow-lg); z-index: 18; max-width: 94vw; }
+.selbar .sb { background: var(--surface-2); color: var(--fg); border: 1px solid var(--border);
+  padding: 8px 12px; border-radius: 10px; font-size: 13px; font-weight: 600; }
+.selbar .sb:hover { background: var(--border); }
+.swatches { display: flex; gap: 6px; }
+.sw { width: 24px; height: 24px; border-radius: 999px; border: 2px solid rgba(0,0,0,.12); padding: 0; }
+.sw.on { border-color: var(--fg); transform: scale(1.12); }
+
+/* Diálogo de compartir */
+.share-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.share-grid button { width: 100%; background: var(--surface-2); color: var(--fg); border: 1px solid var(--border); font-weight: 600; }
+.share-grid button:hover { background: var(--border); }
+
+/* Lista de notas/subrayados */
+.hl-item { display: flex; gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.hl-bar { width: 5px; border-radius: 3px; flex: 0 0 5px; }
+.hl-body { flex: 1; min-width: 0; }
+.hl-text { font-size: 13.5px; line-height: 1.4; cursor: pointer; }
+.hl-note { font-size: 12.5px; color: var(--muted); margin-top: 5px; background: var(--surface-2); padding: 7px 9px; border-radius: 8px; }
+.hl-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.mini { background: transparent; color: var(--primary); border: 1px solid var(--border); padding: 5px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; }
+.mini:hover { background: var(--surface-2); }
+.mini.danger, .btn-full.danger { color: #dc2626; }
+.btn-full.danger { border-color: #f1c0c0; }
 .center { height: 100%; display: flex; align-items: center; justify-content: center; padding: 20px; background: radial-gradient(1200px 600px at 50% -10%, #efeefc, var(--bg)); }
 .spinner { width: 20px; height: 20px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }

@@ -1,5 +1,5 @@
-// Inicialización de Firebase. La configuración (firebaseConfig) la pega el usuario
-// una vez; se guarda en el navegador. Es información pública (va en el cliente).
+// Inicialización de Firebase (solo Auth + Firestore; sin Storage, para no requerir
+// facturación). La configuración (firebaseConfig) la pega el usuario una vez.
 
 import { initializeApp } from 'firebase/app'
 import {
@@ -9,7 +9,6 @@ import {
 import {
   getFirestore, doc, setDoc, getDoc, collection, onSnapshot
 } from 'firebase/firestore'
-import { getStorage, ref, uploadBytes, getBytes } from 'firebase/storage'
 
 const CFG_KEY = 'milector_firebase_config'
 const ON_KEY = 'milector_cloud_on'
@@ -17,7 +16,6 @@ const ON_KEY = 'milector_cloud_on'
 let app = null
 let auth = null
 let dbfs = null
-let storage = null
 
 // --- Configuración ---
 export function getConfig() {
@@ -44,7 +42,6 @@ export function parseConfig(text) {
     apiKey: pick('apiKey'),
     authDomain: pick('authDomain'),
     projectId: pick('projectId'),
-    storageBucket: pick('storageBucket'),
     messagingSenderId: pick('messagingSenderId'),
     appId: pick('appId')
   }
@@ -52,7 +49,6 @@ export function parseConfig(text) {
     throw new Error('No se reconoció la configuración. Pega el bloque firebaseConfig completo de Firebase.')
   }
   if (!cfg.authDomain) cfg.authDomain = `${cfg.projectId}.firebaseapp.com`
-  if (!cfg.storageBucket) cfg.storageBucket = `${cfg.projectId}.appspot.com`
   return cfg
 }
 
@@ -64,7 +60,6 @@ export function initFirebase() {
   app = initializeApp(cfg)
   auth = getAuth(app)
   dbfs = getFirestore(app)
-  storage = getStorage(app)
   return true
 }
 
@@ -86,7 +81,7 @@ export async function signInEmail(email, password) {
 export async function logout() { if (auth) await signOut(auth) }
 export function currentUser() { return auth?.currentUser || null }
 
-// --- Firestore: documento por libro, bajo users/{uid}/books/{bookId} ---
+// --- Firestore: un documento por libro, bajo users/{uid}/books/{bookId} ---
 function bookDoc(uid, bookId) { return doc(dbfs, 'users', uid, 'books', bookId) }
 
 export async function cloudGetBook(uid, bookId) {
@@ -103,26 +98,4 @@ export function watchLibrary(uid, cb) {
     snap.forEach((d) => items.push({ id: d.id, ...d.data() }))
     cb(items)
   }, () => { /* sin conexión: se ignora */ })
-}
-
-// --- Storage: EPUB y portada bajo users/{uid}/books/{bookId}/ ---
-export async function cloudUploadEpub(uid, bookId, arrayBuffer) {
-  const r = ref(storage, `users/${uid}/books/${bookId}/book.epub`)
-  await uploadBytes(r, new Uint8Array(arrayBuffer), { contentType: 'application/epub+zip' })
-}
-export async function cloudUploadCover(uid, bookId, blob) {
-  const r = ref(storage, `users/${uid}/books/${bookId}/cover`)
-  await uploadBytes(r, blob, { contentType: blob.type || 'image/jpeg' })
-}
-export async function cloudDownloadEpub(uid, bookId) {
-  const r = ref(storage, `users/${uid}/books/${bookId}/book.epub`)
-  const bytes = await getBytes(r)
-  return bytes.buffer ? bytes.buffer : bytes
-}
-export async function cloudDownloadCover(uid, bookId) {
-  try {
-    const r = ref(storage, `users/${uid}/books/${bookId}/cover`)
-    const bytes = await getBytes(r)
-    return new Blob([bytes])
-  } catch { return null }
 }

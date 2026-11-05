@@ -1,14 +1,16 @@
 # Mi Lector — App web instalable (PWA) con sincronización en Firebase
 
-Lector de EPUB **offline** e **instalable**. Los libros viven en el dispositivo
-(IndexedDB) y, si activas la sincronización, se comparten entre tus dispositivos
-con **Firebase**:
+Lector de EPUB **offline** e **instalable**. Los libros viven en cada dispositivo
+(IndexedDB) y, si activas la sincronización, tu **progreso** se comparte entre tus
+dispositivos con **Firebase** (plan gratuito, sin tarjeta):
 
 - **Progreso y marcadores → Firestore** (se sincronizan **en tiempo real**, sin botón).
   Lees en la PC y al abrir en el celular estás en la última página.
-- **Libros (EPUB) → Firebase Storage**, para que un dispositivo nuevo baje tu biblioteca.
 - **Inicio de sesión con correo y contraseña** (simple: sin Client ID ni pantallas de
   “app no verificada”).
+- **Los archivos EPUB se guardan localmente** en cada dispositivo. Para tener un libro
+  en varios: agrégalo en cada uno, o pásalos de una vez con **Exportar / Restaurar
+  respaldo (JSON)**. La lectura es 100% offline.
 
 ---
 
@@ -36,11 +38,13 @@ Para instalarla como app hace falta **HTTPS** (Netlify y GitHub Pages lo dan).
    **`firebaseConfig`** con `apiKey`, `projectId`, `appId`, etc. **Cópialo** (lo
    pegarás en la app).
 
-### c) Activar los servicios
+### c) Activar los servicios (solo dos; NO necesitas Storage)
 4. **Authentication → Comenzar → Correo electrónico/contraseña → Habilitar.**
 5. **Firestore Database → Crear base de datos** (modo producción, región la más
    cercana, p. ej. `us`).
-6. **Storage → Comenzar** (acepta las opciones por defecto).
+
+> No actives Storage. Esa parte pide tarjeta y esta versión no la usa: los libros se
+> guardan localmente en cada dispositivo.
 
 ### d) Reglas de seguridad (para que cada quien vea solo lo suyo)
 En **Firestore → Reglas**, pega esto y publica:
@@ -54,20 +58,9 @@ service cloud.firestore {
   }
 }
 ```
-En **Storage → Reglas**, pega esto y publica:
-```
-rules_version = '2';
-service firebase.storage {
-  match /b/{bucket}/o {
-    match /users/{uid}/{allPaths=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
-    }
-  }
-}
-```
 
 ### e) Autorizar tu dominio
-7. **Authentication → Configuración → Dominios autorizados → Agregar dominio** y pon
+6. **Authentication → Configuración → Dominios autorizados → Agregar dominio** y pon
    la URL donde abres la app, por ejemplo `lectorepub.netlify.app` o
    `franciscov1988-droid.github.io`. (`localhost` ya viene autorizado.)
 
@@ -82,11 +75,11 @@ service firebase.storage {
    correo y contraseña.
 
 Listo. A partir de ahí:
-- Lo que lees se guarda solo; al abrir un libro en otro dispositivo, saltas a tu
+- Lo que lees se guarda solo; al abrir el mismo libro en otro dispositivo, saltas a tu
   última página.
-- Los EPUB que agregues se suben a tu Storage; un dispositivo nuevo los ve en la
-  biblioteca y los descarga al abrirlos.
 - Un ☁️ en la barra indica que la sincronización está activa.
+- Para leer un libro en otro dispositivo, agrégalo ahí también (el mismo archivo) o
+  pásalo con el respaldo JSON. Tu progreso ya estará guardado y se aplicará solo.
 
 ---
 
@@ -104,5 +97,6 @@ biblioteca con **⋯ → Exportar / Restaurar respaldo (JSON)**.
 - Cada libro se identifica por el hash del archivo, así que el mismo EPUB en varios
   dispositivos comparte progreso. Para que empaten, deja que un dispositivo lo suba y
   en los demás ábrelo desde la biblioteca (se descarga solo).
-- Plan gratuito de Firebase (Spark): suficiente para uso personal (Firestore 1 GB,
-  Storage 5 GB, de sobra para libros y progreso).
+- Plan gratuito de Firebase (Spark): suficiente para uso personal (Firestore 1 GB, de
+  sobra para el progreso de miles de libros). No se usa Storage, así que no te pide
+  tarjeta.
