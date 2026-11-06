@@ -58,10 +58,19 @@ export default function Reader({
   const [shareBox, setShareBox] = useState(null)
   const [markMode, setMarkMode] = useState(false)   // modo "colocar señalador"
   const [activeMarker, setActiveMarker] = useState(null)
+  const [uiVisible, setUiVisible] = useState(true)  // barras visibles (modo inmersivo al ocultarlas)
+  const toggleUiRef = useRef(() => {})
+  toggleUiRef.current = () => setUiVisible((v) => !v)
 
   useEffect(() => { hlRef.current = book.highlights || [] }, [book.highlights])
   useEffect(() => { markersRef.current = book.markers || [] }, [book.markers])
   useEffect(() => { markModeRef.current = markMode }, [markMode])
+
+  // Al abrir, muestra las barras un momento y luego entra en modo inmersivo.
+  useEffect(() => {
+    const t = setTimeout(() => setUiVisible(false), 1800)
+    return () => clearTimeout(t)
+  }, [])
 
   function onAnnotationClick(id) { setActiveHL(id) }
   function onMarkerClick(id) { setActiveMarker(id) }
@@ -110,14 +119,21 @@ export default function Reader({
     registerThemes(rendition)
     applySettings(rendition, settings)
 
-    // Detecta el toque en una palabra cuando el modo señalador está activo
+    // Toques dentro del texto: colocar señalador (modo señal) o mostrar/ocultar barras.
     rendition.hooks.content.register((contents) => {
       try {
         contents.document.addEventListener('click', (e) => {
-          if (!markModeRef.current) return
-          e.preventDefault(); e.stopPropagation()
-          const info = wordAtPoint(contents, e.clientX, e.clientY)
-          if (info && info.cfi) placeMarkerRef.current(info)
+          if (markModeRef.current) {
+            e.preventDefault(); e.stopPropagation()
+            const info = wordAtPoint(contents, e.clientX, e.clientY)
+            if (info && info.cfi) placeMarkerRef.current(info)
+            return
+          }
+          // Si hay texto seleccionado, no alternar barras
+          let selText = ''
+          try { selText = contents.window.getSelection().toString() } catch {}
+          if (selText && selText.trim()) return
+          toggleUiRef.current()
         }, true)
       } catch {}
     })
@@ -264,7 +280,7 @@ export default function Reader({
 
   return (
     <div className="reader">
-      <div className="rbar">
+      <div className={`rbar ${uiVisible ? '' : 'hidden'}`}>
         <button className="icon" onClick={() => { flushSave(); onBack() }} title="Volver">←</button>
         <h2 style={{ flex: 1 }}>{cleanTitle(book.title)}</h2>
         <button className={`icon ${markMode ? 'active' : ''}`} onClick={() => { setMarkMode((v) => !v); setSel(null) }} title="Señalador (tocar una palabra)">📌</button>
@@ -307,7 +323,7 @@ export default function Reader({
         </div>
       )}
 
-      <div className="rfoot">
+      <div className={`rfoot ${uiVisible ? '' : 'hidden'}`}>
         <span>{Math.round(pos.percent)}%</span>
         <input type="range" min="0" max="100" value={Math.round(pos.percent)}
           onChange={(e) => seekPercent(rendRef.current, bookRef.current, Number(e.target.value))} />

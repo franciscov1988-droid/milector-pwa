@@ -4,10 +4,11 @@
 
 import * as DB from './db.js'
 import * as FB from './firebase.js'
+import { makeThumbDataUrl, dataUrlToBlob } from './coverUtil.js'
 
-// Registra/actualiza un libro en la nube (sus datos, no el archivo).
+// Registra/actualiza un libro en la nube (sus datos + miniatura de portada, no el archivo).
 export async function uploadBook(uid, book) {
-  await FB.cloudSetBookMeta(uid, book.id, {
+  const data = {
     title: book.title || 'Libro',
     author: book.author || '',
     progress: book.progress || null,
@@ -15,7 +16,17 @@ export async function uploadBook(uid, book) {
     highlights: book.highlights || [],
     markers: book.markers || [],
     updatedAt: Date.now()
-  })
+  }
+  try {
+    const cv = await DB.getCover(book.id)
+    if (cv) data.coverThumb = await makeThumbDataUrl(cv)
+  } catch {}
+  await FB.cloudSetBookMeta(uid, book.id, data)
+}
+
+// Sube/actualiza solo la miniatura de portada.
+export async function pushCover(uid, bookId, dataUrl) {
+  await FB.cloudSetBookMeta(uid, bookId, { coverThumb: dataUrl, updatedAt: Date.now() })
 }
 
 export async function pushProgress(uid, book) {
@@ -39,7 +50,17 @@ export async function pushMarkers(uid, book) {
   await FB.cloudSetBookMeta(uid, book.id, { markers: book.markers || [], updatedAt: Date.now() })
 }
 
-// Aplica un libro remoto (de Firestore) sobre el local: progreso más reciente gana,
+// Devuelve el progreso "más avanzado" entre dos (gana mayor % y, si empatan, el más reciente).
+export function bestProgress(a, b) {
+  if (!a) return b || null
+  if (!b) return a
+  const pa = a.percent || 0, pb = b.percent || 0
+  if (pb > pa) return b
+  if (pb < pa) return a
+  return (b.updatedAt || 0) >= (a.updatedAt || 0) ? b : a
+}
+
+// Aplica un libro remoto (de Firestore) sobre el local: progreso más avanzado gana,
 // marcadores por unión. Solo afecta libros que ya existen en este dispositivo.
 export async function applyRemoteBook(remote) {
   const local = await DB.getBook(remote.id)
@@ -47,7 +68,13 @@ export async function applyRemoteBook(remote) {
   let changed = false
 
   const rp = remote.progress, lp = local.progress
-  if (rp && (!lp || (rp.updatedAt || 0) > (lp.updatedAt || 0))) { local.progress = rp; changed = true }
+  const best = bestProgress(lp, rp)
+  if (rp && best === rp && best !== lp) { local.progress = rp; changed = true }
+
+  // Portada: si llegó una miniatura y aquí no hay portada, guardarla.
+  if (remote.coverThumb) {
+    try { const has = await DB.getCover(remote.id); if (!has) await DB.putCover(remote.id, await dataUrlToBlob(remote.coverThumb)) } catch {}
+  }
 
   const ids = new Map((local.bookmarks || []).map((b) => [b.id, b]))
   for (const bm of remote.bookmarks || []) ids.set(bm.id, bm)

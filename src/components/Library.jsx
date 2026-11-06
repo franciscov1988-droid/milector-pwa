@@ -1,7 +1,7 @@
 import BookCover from './BookCover.jsx'
 import { cleanTitle } from '../lib/cover.js'
 
-export default function Library({ books, onOpen, onDelete }) {
+export default function Library({ books, coverVer, onOpen, onDelete, onChangeCover }) {
   if (!books.length) {
     return (
       <div className="wrap">
@@ -19,8 +19,10 @@ export default function Library({ books, onOpen, onDelete }) {
   return (
     <div className="wrap">
       <div className="hero">
-        <div onClick={() => onOpen(current)} style={{ cursor: 'pointer', width: 130, minWidth: 130 }}>
-          <BookCover book={current} badge={pct} />
+        <div onClick={() => onOpen(current)} style={{ cursor: 'pointer', width: 130, minWidth: 130, position: 'relative' }}>
+          <BookCover book={current} badge={pct} ver={coverVer} />
+          <button className="cover-edit" title="Cambiar portada"
+            onClick={(e) => { e.stopPropagation(); onChangeCover(current) }}>🖼️</button>
         </div>
         <div className="info">
           <div className="eyebrow">{started ? 'SEGUIR LEYENDO' : 'EMPEZAR A LEER'}</div>
@@ -37,10 +39,14 @@ export default function Library({ books, onOpen, onDelete }) {
           <h2 className="section-title">Tu biblioteca</h2>
           <div className="grid">
             {rest.map((b) => (
-              <div className="book" key={b.id} onClick={() => onOpen(b)}>
-                <BookCover book={b} badge={b.progress?.percent || 0} />
+              <div className="book" key={b.id}>
+                <div onClick={() => onOpen(b)}>
+                  <BookCover book={b} badge={b.progress?.percent || 0} ver={coverVer} />
+                </div>
+                <button className="cover-edit" title="Cambiar portada"
+                  onClick={(e) => { e.stopPropagation(); onChangeCover(b) }}>🖼️</button>
                 <button className="del icon" title="Eliminar" onClick={(e) => { e.stopPropagation(); onDelete(b) }}>🗑</button>
-                <div className="title">{cleanTitle(b.title)}</div>
+                <div className="title" onClick={() => onOpen(b)}>{cleanTitle(b.title)}</div>
                 <div className="bar"><div style={{ width: `${Math.min(100, b.progress?.percent || 0)}%` }} /></div>
               </div>
             ))}

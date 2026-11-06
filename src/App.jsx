@@ -4,6 +4,7 @@ import * as FB from './lib/firebase.js'
 import * as CLOUD from './lib/cloud.js'
 import { importEpubFile } from './lib/epubImport.js'
 import { downloadBackup, importBackupFile } from './lib/backup.js'
+import { makeThumbDataUrl, dataUrlToBlob } from './lib/coverUtil.js'
 import Library from './components/Library.jsx'
 import Reader from './components/Reader.jsx'
 
@@ -31,22 +32,30 @@ export default function App() {
 
   const fileInput = useRef(null)
   const importInput = useRef(null)
+  const coverInput = useRef(null)
+  const pendingCoverBook = useRef(null)
   const installEvt = useRef(null)
   const unsubLib = useRef(null)
   const firstSnap = useRef(true)
   const [canInstall, setCanInstall] = useState(false)
+  const [coverVer, setCoverVer] = useState(0)   // fuerza refrescar portadas
 
   async function reload() { setLocalBooks(await DB.getAllBooks()) }
   useEffect(() => { reload() }, [])
 
   // Lista mostrada: une libros locales + los que solo están en la nube.
+  // El progreso mostrado es el MÁS AVANZADO entre lo local y lo de la nube,
+  // para que el % aparezca al instante aunque no hayas reabierto el libro.
   const books = useMemo(() => {
     const byId = new Map()
-    for (const b of localBooks) byId.set(b.id, { ...b, cloudOnly: false })
+    for (const b of localBooks) {
+      const r = cloudMeta[b.id]
+      byId.set(b.id, { ...b, cloudOnly: false, progress: CLOUD.bestProgress(b.progress, r?.progress), coverThumb: r?.coverThumb || null })
+    }
     for (const id of Object.keys(cloudMeta)) {
       if (!byId.has(id)) {
         const r = cloudMeta[id]
-        byId.set(id, { id, title: r.title || 'Libro', author: r.author || '', progress: r.progress || null, bookmarks: r.bookmarks || [], lastOpenedAt: 0, cloudOnly: true })
+        byId.set(id, { id, title: r.title || 'Libro', author: r.author || '', progress: r.progress || null, bookmarks: r.bookmarks || [], lastOpenedAt: 0, cloudOnly: true, coverThumb: r.coverThumb || null })
       }
     }
     return [...byId.values()].sort((a, b) => {
@@ -188,6 +197,28 @@ export default function App() {
     await DB.deleteBookAll(book.id); await reload(); showToast('Libro eliminado de este dispositivo')
   }
 
+  // --- Portadas ---
+  function changeCover(book) { pendingCoverBook.current = book; coverInput.current?.click() }
+  async function onPickCover(ev) {
+    const f = ev.target.files?.[0]; ev.target.value = ''
+    const book = pendingCoverBook.current; pendingCoverBook.current = null
+    if (!f || !book) return
+    setBusy(true); setStatus('Guardando portada…')
+    try {
+      const dataUrl = await makeThumbDataUrl(f, 600)        // miniatura local nítida
+      await DB.putCover(book.id, await dataUrlToBlob(dataUrl))
+      // Asegurar que el libro exista localmente (si era solo de la nube, igual guardamos la portada)
+      if (!(await DB.getBook(book.id)) && book.cloudOnly) {
+        await DB.putBook({ id: book.id, title: book.title, author: book.author || '', addedAt: Date.now(), lastOpenedAt: 0, progress: book.progress || null, bookmarks: [], highlights: [], markers: [] })
+      }
+      setCoverVer((v) => v + 1)
+      await reload()
+      if (user && FB.isCloudOn()) { try { await CLOUD.pushCover(user.uid, book.id, await makeThumbDataUrl(f, 420)) } catch {} }
+      showToast('Portada actualizada')
+    } catch (e) { showToast('No se pudo cambiar la portada: ' + e.message) }
+    finally { setBusy(false); setStatus('') }
+  }
+
   // --- Progreso / marcadores ---
   async function saveProgress(bookId, prog) {
     const b = await DB.getBook(bookId); if (!b) return
@@ -318,12 +349,13 @@ export default function App() {
         </div>
       </div>
 
-      <div className="content"><Library books={books} onOpen={openBook} onDelete={deleteBook} /></div>
+      <div className="content"><Library books={books} coverVer={coverVer} onOpen={openBook} onDelete={deleteBook} onChangeCover={changeCover} /></div>
 
       <button className="fab" onClick={() => fileInput.current?.click()}>＋ Agregar EPUB</button>
 
       <input ref={fileInput} type="file" accept=".epub,application/epub+zip" multiple style={hiddenInput} onChange={onPickEpubs} />
       <input ref={importInput} type="file" accept="application/json,.json" style={hiddenInput} onChange={onPickBackup} />
+      <input ref={coverInput} type="file" accept="image/*" style={hiddenInput} onChange={onPickCover} />
 
       {backupModal && (
         <div className="modal-bg" onClick={() => setBackupModal(false)}>
