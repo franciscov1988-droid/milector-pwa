@@ -228,6 +228,23 @@ export default function App() {
     if (user && FB.isCloudOn()) { try { await CLOUD.pushHighlights(user.uid, b) } catch {} }
   }
 
+  // --- Señaladores (marca de lectura en una palabra) ---
+  async function saveMarker(bookId, m) {
+    const b = await DB.getBook(bookId); if (!b) return
+    b.markers = [...(b.markers || []).filter((x) => x.id !== m.id), m]
+    await DB.putBook(b)
+    if (current?.book.id === bookId) setCurrent((c) => ({ ...c, book: b }))
+    showToast('Señal colocada')
+    if (user && FB.isCloudOn()) { try { await CLOUD.pushMarkers(user.uid, b) } catch {} }
+  }
+  async function removeMarker(bookId, id) {
+    const b = await DB.getBook(bookId); if (!b) return
+    b.markers = (b.markers || []).filter((x) => x.id !== id)
+    await DB.putBook(b)
+    if (current?.book.id === bookId) setCurrent((c) => ({ ...c, book: b }))
+    if (user && FB.isCloudOn()) { try { await CLOUD.pushMarkers(user.uid, b) } catch {} }
+  }
+
   // --- Respaldo JSON ---
   async function exportAll(includeEpubs) {
     setBackupModal(false); setBusy(true)
@@ -269,6 +286,8 @@ export default function App() {
         onRemoveBookmark={removeBookmark}
         onSaveHighlight={saveHighlight}
         onRemoveHighlight={removeHighlight}
+        onSaveMarker={saveMarker}
+        onRemoveMarker={removeMarker}
         onBack={() => { setCurrent(null); reload() }}
       />
     )

@@ -13,6 +13,7 @@ export async function uploadBook(uid, book) {
     progress: book.progress || null,
     bookmarks: book.bookmarks || [],
     highlights: book.highlights || [],
+    markers: book.markers || [],
     updatedAt: Date.now()
   })
 }
@@ -32,6 +33,10 @@ export async function pushBookmarks(uid, book) {
 
 export async function pushHighlights(uid, book) {
   await FB.cloudSetBookMeta(uid, book.id, { highlights: book.highlights || [], updatedAt: Date.now() })
+}
+
+export async function pushMarkers(uid, book) {
+  await FB.cloudSetBookMeta(uid, book.id, { markers: book.markers || [], updatedAt: Date.now() })
 }
 
 // Aplica un libro remoto (de Firestore) sobre el local: progreso más reciente gana,
@@ -56,7 +61,12 @@ export async function applyRemoteBook(remote) {
   }
   local.highlights = [...hid.values()]
 
-  if (changed || (remote.bookmarks || []).length || (remote.highlights || []).length) await DB.putBook(local)
+  // Señaladores: unión por id
+  const mid = new Map((local.markers || []).map((m) => [m.id, m]))
+  for (const rm of remote.markers || []) mid.set(rm.id, rm)
+  local.markers = [...mid.values()]
+
+  if (changed || (remote.bookmarks || []).length || (remote.highlights || []).length || (remote.markers || []).length) await DB.putBook(local)
   return changed
 }
 

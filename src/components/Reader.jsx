@@ -23,10 +23,11 @@ const HL_COLORS = [
   { name: 'Azul', value: '#9BD1F5' },
   { name: 'Rosa', value: '#F3A6C4' }
 ]
+const MARKER_COLOR = '#E11D48' // rojo del señalador (distinto de los subrayados)
 
 export default function Reader({
   buffer, book, onSaveProgress, onAddBookmark, onRemoveBookmark,
-  onSaveHighlight, onRemoveHighlight, onBack
+  onSaveHighlight, onRemoveHighlight, onSaveMarker, onRemoveMarker, onBack
 }) {
   const bookId = book.id
   const progress = book.progress
@@ -41,21 +42,29 @@ export default function Reader({
   const wakeLock = useRef(null)
   const selContents = useRef(null)
   const hlRef = useRef(book.highlights || [])
+  const markersRef = useRef(book.markers || [])
+  const markModeRef = useRef(false)
+  const placeMarkerRef = useRef(() => {})
 
   const [settings, setSettings] = useState(loadSettings())
   const [panel, setPanel] = useState(null)
   const [pos, setPos] = useState({ percent: progress?.percent || 0, page: 1, total: 1, chapterIndex: 0, progressInChapter: 0 })
   const [ready, setReady] = useState(false)
 
-  const [sel, setSel] = useState(null)          // selección activa: {cfiRange, text}
+  const [sel, setSel] = useState(null)
   const [selColor, setSelColor] = useState(HL_COLORS[0].value)
-  const [editNote, setEditNote] = useState(null) // highlight cuya nota se edita
-  const [activeHL, setActiveHL] = useState(null) // id del subrayado tocado
-  const [shareBox, setShareBox] = useState(null) // texto de la cita a compartir
+  const [editNote, setEditNote] = useState(null)
+  const [activeHL, setActiveHL] = useState(null)
+  const [shareBox, setShareBox] = useState(null)
+  const [markMode, setMarkMode] = useState(false)   // modo "colocar señalador"
+  const [activeMarker, setActiveMarker] = useState(null)
 
   useEffect(() => { hlRef.current = book.highlights || [] }, [book.highlights])
+  useEffect(() => { markersRef.current = book.markers || [] }, [book.markers])
+  useEffect(() => { markModeRef.current = markMode }, [markMode])
 
   function onAnnotationClick(id) { setActiveHL(id) }
+  function onMarkerClick(id) { setActiveMarker(id) }
 
   function applyAllAnnotations() {
     const r = rendRef.current
@@ -66,7 +75,29 @@ export default function Reader({
           { fill: hl.color, 'fill-opacity': '0.35' })
       } catch {}
     }
+    for (const m of markersRef.current) drawMarker(m)
   }
+
+  function drawMarker(m) {
+    const r = rendRef.current
+    if (!r) return
+    try {
+      r.annotations.highlight(m.cfi, { id: m.id, kind: 'marker' }, () => onMarkerClick(m.id), 'mlt-marker',
+        { fill: MARKER_COLOR, 'fill-opacity': '0.18', stroke: MARKER_COLOR, 'stroke-width': '1.4', 'stroke-opacity': '0.95' })
+    } catch {}
+  }
+
+  // Coloca el señalador en la palabra tocada (lo llama el listener del iframe)
+  function placeMarker({ cfi, text }) {
+    const m = {
+      id: uuid(), cfi, text: (text || '').trim().slice(0, 80),
+      chapterIndex: pos.chapterIndex, percent: pos.percent, createdAt: Date.now()
+    }
+    drawMarker(m)
+    onSaveMarker(bookId, m)
+    setMarkMode(false)
+  }
+  placeMarkerRef.current = placeMarker
 
   useEffect(() => {
     let destroyed = false
@@ -78,6 +109,18 @@ export default function Reader({
     rendRef.current = rendition
     registerThemes(rendition)
     applySettings(rendition, settings)
+
+    // Detecta el toque en una palabra cuando el modo señalador está activo
+    rendition.hooks.content.register((contents) => {
+      try {
+        contents.document.addEventListener('click', (e) => {
+          if (!markModeRef.current) return
+          e.preventDefault(); e.stopPropagation()
+          const info = wordAtPoint(contents, e.clientX, e.clientY)
+          if (info && info.cfi) placeMarkerRef.current(info)
+        }, true)
+      } catch {}
+    })
 
     b.ready.then(async () => {
       if (destroyed) return
@@ -100,8 +143,8 @@ export default function Reader({
       lastPos.current = p; setPos(p); scheduleSave(p)
     })
 
-    // Selección de texto → barra de acciones
     rendition.on('selected', (cfiRange, contents) => {
+      if (markModeRef.current) return
       let text = ''
       try { text = contents.window.getSelection().toString() } catch {}
       if (!text || !text.trim()) return
@@ -181,10 +224,7 @@ export default function Reader({
     clearSelection()
     if (openNote) setEditNote(hl)
   }
-  function saveNote(hl, note) {
-    onSaveHighlight(bookId, { ...hl, note, updatedAt: Date.now() })
-    setEditNote(null)
-  }
+  function saveNote(hl, note) { onSaveHighlight(bookId, { ...hl, note, updatedAt: Date.now() }); setEditNote(null) }
   function changeColor(hl, color) {
     try { rendRef.current.annotations.remove(hl.cfi, 'highlight') } catch {}
     try {
@@ -200,6 +240,14 @@ export default function Reader({
   }
   async function goToHighlight(hl) { setPanel(null); try { await rendRef.current.display(hl.cfi) } catch {} }
 
+  // --- Señaladores ---
+  async function goToMarker(m) { setPanel(null); setActiveMarker(null); try { await rendRef.current.display(m.cfi) } catch {} }
+  function deleteMarker(m) {
+    try { rendRef.current.annotations.remove(m.cfi, 'highlight') } catch {}
+    onRemoveMarker(bookId, m.id)
+    setActiveMarker(null)
+  }
+
   // --- Compartir con cita ---
   function buildCita(text) {
     const autorTitulo = `${book.author ? book.author + ', ' : ''}${cleanTitle(book.title)}`
@@ -212,17 +260,26 @@ export default function Reader({
   }
 
   const highlights = book.highlights || []
+  const markers = book.markers || []
 
   return (
     <div className="reader">
       <div className="rbar">
         <button className="icon" onClick={() => { flushSave(); onBack() }} title="Volver">←</button>
         <h2 style={{ flex: 1 }}>{cleanTitle(book.title)}</h2>
+        <button className={`icon ${markMode ? 'active' : ''}`} onClick={() => { setMarkMode((v) => !v); setSel(null) }} title="Señalador (tocar una palabra)">📌</button>
         <button className="icon" onClick={addBookmark} title="Marcar página">🔖</button>
         <button className="icon" onClick={() => setPanel('notes')} title="Notas y subrayados">🖍️</button>
-        <button className="icon" onClick={() => setPanel('bookmarks')} title="Marcadores">≡</button>
+        <button className="icon" onClick={() => setPanel('bookmarks')} title="Marcadores y señales">≡</button>
         <button className="icon" onClick={() => setPanel('settings')} title="Ajustes">Aa</button>
       </div>
+
+      {markMode && (
+        <div className="markhint">
+          📌 Toca una palabra para dejar tu señal
+          <button className="icon" onClick={() => setMarkMode(false)} title="Salir">✕</button>
+        </div>
+      )}
 
       <div className="viewer" style={{ padding: `0 ${settings.margin}px`, background: PAGE_BG[settings.theme] }}>
         <div ref={viewerRef} style={{ height: '100%' }} />
@@ -231,11 +288,10 @@ export default function Reader({
             <span className="spinner" />
           </div>
         )}
-        {!sel && <div className="nav left" onClick={() => rendRef.current?.prev()}><span>‹</span></div>}
-        {!sel && <div className="nav right" onClick={() => rendRef.current?.next()}><span>›</span></div>}
+        {!sel && !markMode && <div className="nav left" onClick={() => rendRef.current?.prev()}><span>‹</span></div>}
+        {!sel && !markMode && <div className="nav right" onClick={() => rendRef.current?.next()}><span>›</span></div>}
       </div>
 
-      {/* Barra que aparece al seleccionar texto */}
       {sel && (
         <div className="selbar">
           <div className="swatches">
@@ -260,13 +316,16 @@ export default function Reader({
 
       {panel && <div className="overlay" onClick={() => setPanel(null)} />}
       {panel === 'settings' && <SettingsPanel settings={settings} setSettings={setSettings} onClose={() => setPanel(null)} />}
-      {panel === 'bookmarks' && <BookmarksPanel bookmarks={bookmarks} onGo={goToBookmark} onRemove={(id) => onRemoveBookmark(bookId, id)} onClose={() => setPanel(null)} />}
+      {panel === 'bookmarks' && (
+        <BookmarksPanel bookmarks={bookmarks} markers={markers}
+          onGo={goToBookmark} onRemove={(id) => onRemoveBookmark(bookId, id)}
+          onGoMarker={goToMarker} onRemoveMarker={(m) => deleteMarker(m)} onClose={() => setPanel(null)} />
+      )}
       {panel === 'notes' && (
         <NotesPanel highlights={highlights} onGo={goToHighlight} onEdit={(hl) => setEditNote(hl)}
           onShare={(t) => doShare(t)} onDelete={deleteHighlight} onClose={() => setPanel(null)} />
       )}
 
-      {/* Acciones al tocar un subrayado existente */}
       {activeHL && (() => {
         const hl = highlights.find((h) => h.id === activeHL)
         if (!hl) return null
@@ -274,9 +333,24 @@ export default function Reader({
           <HLActions hl={hl}
             onNote={() => { setActiveHL(null); setEditNote(hl) }}
             onShare={() => { setActiveHL(null); doShare(hl.text) }}
-            onColor={(c) => changeColor(hl, c)}
-            onDelete={() => deleteHighlight(hl)}
-            onClose={() => setActiveHL(null)} />
+            onColor={(c) => changeColor(hl, c)} onDelete={() => deleteHighlight(hl)} onClose={() => setActiveHL(null)} />
+        )
+      })()}
+
+      {activeMarker && (() => {
+        const m = markers.find((x) => x.id === activeMarker)
+        if (!m) return null
+        return (
+          <div className="modal-bg" onClick={() => setActiveMarker(null)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <h3>📌 Señal de lectura</h3>
+              {m.text ? <p style={{ fontStyle: 'italic' }}>“{m.text}”</p> : null}
+              <p style={{ fontSize: 13, color: 'var(--muted)' }}>Capítulo {(m.chapterIndex || 0) + 1} · {Math.round(m.percent || 0)}%</p>
+              <button className="btn-full" onClick={() => goToMarker(m)}>Ir a la señal</button>
+              <button className="ghost btn-full danger" onClick={() => deleteMarker(m)} style={{ marginTop: 8 }}>Quitar señal</button>
+              <button className="ghost btn-full" onClick={() => setActiveMarker(null)} style={{ marginTop: 8 }}>Cerrar</button>
+            </div>
+          </div>
         )
       })()}
 
@@ -316,6 +390,35 @@ async function seekPercent(rendition, book, pct) {
   try { if (book.locations?.length?.()) await rendition.display(book.locations.cfiFromPercentage(pct / 100)) } catch {}
 }
 
+// Palabra bajo el punto tocado → { cfi, text }
+function wordAtPoint(contents, x, y) {
+  try {
+    const doc = contents.document
+    let range = null
+    if (doc.caretRangeFromPoint) range = doc.caretRangeFromPoint(x, y)
+    else if (doc.caretPositionFromPoint) {
+      const p = doc.caretPositionFromPoint(x, y)
+      if (p) { range = doc.createRange(); range.setStart(p.offsetNode, p.offset); range.collapse(true) }
+    }
+    if (!range) return null
+    const node = range.startContainer
+    if (!node || node.nodeType !== 3) return null
+    const text = node.nodeValue || ''
+    const isWord = (c) => c && /[^\s.,;:!?¡¿"'«»()\[\]{}—–\-]/.test(c)
+    let start = range.startOffset, end = range.startOffset
+    while (start > 0 && isWord(text[start - 1])) start--
+    while (end < text.length && isWord(text[end])) end++
+    if (end <= start) return null
+    const wr = doc.createRange()
+    wr.setStart(node, start); wr.setEnd(node, end)
+    let cfi = null
+    try { if (contents.cfiFromRange) cfi = contents.cfiFromRange(wr) } catch {}
+    if (!cfi) { try { cfi = new ePub.CFI(wr, contents.cfiBase).toString() } catch {} }
+    if (!cfi) return null
+    return { cfi, text: wr.toString() }
+  } catch { return null }
+}
+
 /* ------------ paneles y diálogos ------------ */
 function SettingsPanel({ settings, setSettings, onClose }) {
   const set = (patch) => setSettings({ ...settings, ...patch })
@@ -343,18 +446,35 @@ function Row({ label, items, val, on }) {
     </div>
   )
 }
-function BookmarksPanel({ bookmarks, onGo, onRemove, onClose }) {
+function BookmarksPanel({ bookmarks, markers, onGo, onRemove, onGoMarker, onRemoveMarker, onClose }) {
+  const bms = (bookmarks || []).slice().sort((a, b) => a.percent - b.percent)
+  const mks = (markers || []).slice().sort((a, b) => (a.percent || 0) - (b.percent || 0))
   return (
     <div className="panel">
-      <h3>Marcadores</h3>
-      {(!bookmarks || bookmarks.length === 0) && <p style={{ color: 'var(--muted)', fontSize: 14 }}>Sin marcadores todavía.</p>}
-      {(bookmarks || []).slice().sort((a, b) => a.percent - b.percent).map((bm) => (
+      <h3>Marcadores y señales</h3>
+
+      <div className="sub-h">📌 Señaladores</div>
+      {mks.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Activa 📌 y toca una palabra para dejar tu señal.</p>}
+      {mks.map((m) => (
+        <div className="bm-item" key={m.id}>
+          <div className="txt" onClick={() => onGoMarker(m)}>
+            {m.text ? `“${m.text}”` : 'Señal'}
+            <div className="sub">Cap. {(m.chapterIndex || 0) + 1} · {Math.round(m.percent || 0)}%</div>
+          </div>
+          <button className="icon" onClick={() => onRemoveMarker(m)} title="Quitar">🗑</button>
+        </div>
+      ))}
+
+      <div className="sub-h" style={{ marginTop: 18 }}>🔖 Marcadores de página</div>
+      {bms.length === 0 && <p style={{ color: 'var(--muted)', fontSize: 13 }}>Sin marcadores de página.</p>}
+      {bms.map((bm) => (
         <div className="bm-item" key={bm.id}>
           <div className="txt" onClick={() => onGo(bm)}>{bm.snippet}<div className="sub">{Math.round(bm.percent)}%</div></div>
           <button className="icon" onClick={() => onRemove(bm.id)} title="Eliminar">🗑</button>
         </div>
       ))}
-      <button className="ghost btn-full" onClick={onClose} style={{ marginTop: 12 }}>Cerrar</button>
+
+      <button className="ghost btn-full" onClick={onClose} style={{ marginTop: 14 }}>Cerrar</button>
     </div>
   )
 }
